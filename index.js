@@ -1,6 +1,5 @@
 // index.js
 const express = require("express");
-const path = require("path");
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -10,6 +9,7 @@ const COMMAND_KEY     = process.env.COMMAND_KEY || "change-this-key";
 const COMMAND_TTL_MS  = 60 * 1000; // 1 minute
 
 app.use(express.json());
+app.use(express.urlencoded({ extended: false })); // để đọc form POST
 
 // In-memory command store: { [userLower]: { cmd, ts } }
 const commandStore = Object.create(null);
@@ -42,13 +42,19 @@ function popCommand(user) {
 }
 
 function checkKey(key) {
-  // simple shared secret check
   return key === COMMAND_KEY;
 }
 
-// ============ API ============
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
 
-// External clients can POST a command (optional, bạn có thể không dùng route này)
+// ============ API (Roblox & optional external) ============
+
 app.post("/api/set-command", (req, res) => {
   const body = req.body || {};
   const user = (body.user || "").trim();
@@ -66,7 +72,6 @@ app.post("/api/set-command", (req, res) => {
   return res.json({ ok: true });
 });
 
-// Roblox script polls this endpoint every 2s
 app.get("/api/get-command", (req, res) => {
   const user = (req.query.user || "").trim();
   const key  = req.query.key;
@@ -78,29 +83,44 @@ app.get("/api/get-command", (req, res) => {
     return res.status(403).json({ ok: false, error: "bad_key" });
   }
 
-  const cmd = popCommand(user); // returns null if expired or none
+  const cmd = popCommand(user); // null nếu hết hạn / không có
   return res.json({ ok: true, cmd: cmd || null });
 });
 
-// ============ Web panel ============
-// Called from Discord embed: /panel?user=Iris_11109&cmd=sellall
-//  -> ghi lệnh vào RAM, rồi show UI đẹp cho user.
-app.get("/panel", (req, res) => {
-  const userRaw = (req.query.user || "").trim();
-  const cmdRaw  = (req.query.cmd  || "").trim().toLowerCase();
+// ============ HTML renderer ============
 
-  if (!userRaw || !cmdRaw) {
-    return res.status(400).send("Missing 'user' or 'cmd' query parameter.");
-  }
+function renderPanelPage(userRaw, cmdRaw, state /* "preview" | "sent" */) {
+  const safeUser = escapeHtml(userRaw);
+  const safeCmd  = escapeHtml(cmdRaw);
 
-  // Trust this route (coming from your own embed), so no key check here.
-  setCommand(userRaw, cmdRaw);
+  const isPreview = state === "preview";
 
-  // Simple modern UI (English only)
-  const safeUser = userRaw.replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  const safeCmd  = cmdRaw.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const badgeText  = isPreview ? "Confirmation required" : "Command sent";
+  const badgeGrad  = isPreview
+    ? "linear-gradient(135deg, #f59e0b, #f97316)"
+    : "linear-gradient(135deg, #22c55e, #16a34a)";
 
-  const html = `<!doctype html>
+  const statusText = isPreview
+    ? "Please confirm this action before it is sent to the player."
+    : "Your command has been queued for this player.";
+
+  const hintText = isPreview
+    ? "After you confirm, the command will be queued for the player. Commands automatically expire after 1 minute."
+    : "If the player is in-game and the script is running, it should execute within a few seconds. Commands automatically expire after 1 minute.";
+
+  const actionButton = isPreview
+    ? `<form method="POST" action="/panel/confirm" style="margin-top:14px;">
+         <input type="hidden" name="user" value="${safeUser}">
+         <input type="hidden" name="cmd"  value="${safeCmd}">
+         <button class="primary-btn" type="submit">
+           Confirm Sellall
+         </button>
+       </form>`
+    : `<button class="secondary-btn" onclick="window.close();">
+         Close this tab
+       </button>`;
+
+  return `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
@@ -156,7 +176,7 @@ app.get("/panel", (req, res) => {
       align-items: center;
       padding: 4px 10px;
       border-radius: 999px;
-      background: linear-gradient(135deg, #22c55e, #16a34a);
+      background: ${badgeGrad};
       font-size: 11px;
       font-weight: 600;
       text-transform: uppercase;
@@ -168,7 +188,7 @@ app.get("/panel", (req, res) => {
       width: 7px;
       height: 7px;
       border-radius: 999px;
-      background: #bbf7d0;
+      background: #fef3c7;
       margin-right: 6px;
     }
     .status-text {
@@ -192,12 +212,11 @@ app.get("/panel", (req, res) => {
       font-weight: 500;
       color: #a5b4fc;
     }
-    .close-btn {
-      margin-top: 14px;
+    .primary-btn {
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      padding: 8px 14px;
+      padding: 8px 16px;
       border-radius: 999px;
       border: none;
       background: rgba(37, 99, 235, 0.95);
@@ -206,8 +225,25 @@ app.get("/panel", (req, res) => {
       font-weight: 500;
       cursor: pointer;
     }
-    .close-btn:hover {
+    .primary-btn:hover {
       background: rgb(59, 130, 246);
+    }
+    .secondary-btn {
+      margin-top: 14px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 7px 14px;
+      border-radius: 999px;
+      border: 1px solid rgba(75, 85, 99, 0.9);
+      background: transparent;
+      color: #e5e7eb;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+    }
+    .secondary-btn:hover {
+      background: rgba(31, 41, 55, 0.9);
     }
   </style>
 </head>
@@ -223,20 +259,17 @@ app.get("/panel", (req, res) => {
 
     <div class="badge">
       <span class="badge-dot"></span>
-      Command sent
+      ${badgeText}
     </div>
 
     <div class="status-text">
-      Your command has been queued for this player.
+      ${statusText}
     </div>
     <div class="hint">
-      If the player is in-game and the script is running, it should execute within a few seconds.
-      Commands automatically expire after <strong>1 minute</strong>.
+      ${hintText}
     </div>
 
-    <button class="close-btn" onclick="window.close();">
-      Close this tab
-    </button>
+    ${actionButton}
 
     <div class="footer">
       <span class="brand">Mozil · Roblox Scripts</span>
@@ -245,7 +278,36 @@ app.get("/panel", (req, res) => {
   </div>
 </body>
 </html>`;
+}
 
+// ============ Web panel routes ============
+
+// Step 1: open preview page (no command sent yet)
+app.get("/panel", (req, res) => {
+  const userRaw = (req.query.user || "").trim();
+  const cmdRaw  = (req.query.cmd  || "").trim().toLowerCase();
+
+  if (!userRaw || !cmdRaw) {
+    return res.status(400).send("Missing 'user' or 'cmd' query parameter.");
+  }
+
+  const html = renderPanelPage(userRaw, cmdRaw, "preview");
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  return res.send(html);
+});
+
+// Step 2: user clicks "Confirm Sellall" -> send command + show success page
+app.post("/panel/confirm", (req, res) => {
+  const userRaw = (req.body.user || "").trim();
+  const cmdRaw  = (req.body.cmd  || "").trim().toLowerCase();
+
+  if (!userRaw || !cmdRaw) {
+    return res.status(400).send("Missing 'user' or 'cmd' in form body.");
+  }
+
+  setCommand(userRaw, cmdRaw); // store command with TTL
+
+  const html = renderPanelPage(userRaw, cmdRaw, "sent");
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   return res.send(html);
 });
