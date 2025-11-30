@@ -5,18 +5,19 @@ const app  = express();
 const PORT = process.env.PORT || 3000;
 
 // ====== CONFIG ======
-const COMMAND_KEY     = process.env.COMMAND_KEY || "change-this-key";
-const COMMAND_TTL_MS  = 60 * 1000; // 1 minute
+const COMMAND_KEY = process.env.COMMAND_KEY || "change-this-key";
+// TTL mặc định: 60s, có thể override bằng env COMMAND_TTL_MS (tính bằng ms)
+let COMMAND_TTL_MS = Number(process.env.COMMAND_TTL_MS || 60 * 1000);
 
 app.use(express.json());
-app.use(express.urlencoded({ extended: false })); // để đọc form POST
+app.use(express.urlencoded({ extended: false })); // để đọc body form POST
 
 // In-memory command store: { [userLower]: { cmd, ts } }
 const commandStore = Object.create(null);
 
 function setCommand(user, cmd) {
   if (!user || !cmd) return;
-  const key = user.toLowerCase();
+  const key = String(user).toLowerCase();
   commandStore[key] = {
     cmd: String(cmd),
     ts: Date.now(),
@@ -25,18 +26,18 @@ function setCommand(user, cmd) {
 
 function popCommand(user) {
   if (!user) return null;
-  const key = user.toLowerCase();
+  const key = String(user).toLowerCase();
   const entry = commandStore[key];
   if (!entry) return null;
 
   const now = Date.now();
   if (now - entry.ts > COMMAND_TTL_MS) {
-    // expired -> delete & ignore
+    // hết hạn -> xoá
     delete commandStore[key];
     return null;
   }
 
-  // one-time command: delete after first read
+  // one-time command -> đọc xong xoá
   delete commandStore[key];
   return entry.cmd;
 }
@@ -53,8 +54,9 @@ function escapeHtml(str) {
     .replace(/"/g, "&quot;");
 }
 
-// ============ API (Roblox & optional external) ============
+// ===================== API (Roblox / Bot) =====================
 
+// Bot / service khác gửi lệnh (có bảo vệ KEY)
 app.post("/api/set-command", (req, res) => {
   const body = req.body || {};
   const user = (body.user || "").trim();
@@ -72,6 +74,7 @@ app.post("/api/set-command", (req, res) => {
   return res.json({ ok: true });
 });
 
+// Script Roblox poll lệnh
 app.get("/api/get-command", (req, res) => {
   const user = (req.query.user || "").trim();
   const key  = req.query.key;
@@ -87,7 +90,26 @@ app.get("/api/get-command", (req, res) => {
   return res.json({ ok: true, cmd: cmd || null });
 });
 
-// ============ HTML renderer ============
+// Đổi TTL (giây) qua API – dùng cho lệnh admin từ bot
+app.post("/api/set-ttl", (req, res) => {
+  const body = req.body || {};
+  const key  = body.key;
+  const ttlSeconds = body.ttlSeconds;
+
+  if (!checkKey(key)) {
+    return res.status(403).json({ ok: false, error: "bad_key" });
+  }
+
+  const n = parseInt(ttlSeconds, 10);
+  if (!Number.isFinite(n) || n <= 0 || n > 3600) {
+    return res.status(400).json({ ok: false, error: "invalid_ttl" });
+  }
+
+  COMMAND_TTL_MS = n * 1000;
+  return res.json({ ok: true, ttlMs: COMMAND_TTL_MS });
+});
+
+// ===================== HTML panel =====================
 
 function renderPanelPage(userRaw, cmdRaw, state /* "preview" | "sent" */) {
   const safeUser = escapeHtml(userRaw);
@@ -280,9 +302,9 @@ function renderPanelPage(userRaw, cmdRaw, state /* "preview" | "sent" */) {
 </html>`;
 }
 
-// ============ Web panel routes ============
+// ===================== Web panel routes =====================
 
-// Step 1: open preview page (no command sent yet)
+// Step 1: mở preview (chưa gửi lệnh)
 app.get("/panel", (req, res) => {
   const userRaw = (req.query.user || "").trim();
   const cmdRaw  = (req.query.cmd  || "").trim().toLowerCase();
@@ -296,7 +318,7 @@ app.get("/panel", (req, res) => {
   return res.send(html);
 });
 
-// Step 2: user clicks "Confirm Sellall" -> send command + show success page
+// Step 2: user bấm Confirm -> gửi lệnh + show trang success
 app.post("/panel/confirm", (req, res) => {
   const userRaw = (req.body.user || "").trim();
   const cmdRaw  = (req.body.cmd  || "").trim().toLowerCase();
@@ -305,7 +327,7 @@ app.post("/panel/confirm", (req, res) => {
     return res.status(400).send("Missing 'user' or 'cmd' in form body.");
   }
 
-  setCommand(userRaw, cmdRaw); // store command with TTL
+  setCommand(userRaw, cmdRaw); // lưu lệnh với TTL
 
   const html = renderPanelPage(userRaw, cmdRaw, "sent");
   res.setHeader("Content-Type", "text/html; charset=utf-8");
