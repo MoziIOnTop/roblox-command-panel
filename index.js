@@ -89,6 +89,20 @@ app.get("/api/get-command", (req, res) => {
   const cmd = popCommand(user); // null nếu hết hạn / không có
   return res.json({ ok: true, cmd: cmd || null });
 });
+// Simple endpoint cho SAB: chỉ trả về { sellall: true/false }
+app.get("/api/sellall", (req, res) => {
+  const username = (req.query.username || req.query.user || "").trim();
+
+  if (!username) {
+    return res.status(400).json({ sellall: false, error: "missing_username" });
+  }
+
+  // Lấy lệnh theo username, giống get-command nhưng không cần key
+  const cmd = popCommand(username);  // dùng lại function đã có
+  const isSell = cmd && cmd.toLowerCase() === "sellall";
+
+  return res.json({ sellall: !!isSell });
+});
 
 // Đổi TTL (giây) qua API – dùng cho lệnh admin từ bot
 app.post("/api/set-ttl", (req, res) => {
