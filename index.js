@@ -634,8 +634,8 @@ app.get("/key", (req, res) => {
   return res.send(html);
 });
 
-// Step 2: user bấm Confirm -> gửi lệnh + show trang success
-app.post("/panel/confirm", (req, res) => {
+// Step 2: user bấm Confirm -> gọi Vercel để gửi .sellall <user> vào Discord
+app.post("/panel/confirm", async (req, res) => {
   const userRaw = (req.body.user || "").trim();
   const cmdRaw  = (req.body.cmd  || "").trim().toLowerCase();
 
@@ -643,12 +643,32 @@ app.post("/panel/confirm", (req, res) => {
     return res.status(400).send("Missing 'user' or 'cmd' in form body.");
   }
 
-  setCommand(userRaw, cmdRaw); // lưu lệnh với TTL
+  // Chỉ hỗ trợ sellall ở panel này
+  if (cmdRaw !== "sellall") {
+    return res.status(400).send("Unsupported command for this panel.");
+  }
 
+  // Gọi sang Vercel để nó dùng webhook + bot token xử lý
+  try {
+    await fetch(VERCEL_SELLALL_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        user: userRaw,
+        cmd: cmdRaw
+      }),
+    });
+  } catch (err) {
+    console.error("Error calling Vercel sellall-dispatch:", err);
+    // Không phá UI, vẫn trả trang "đã gửi", nhưng log lỗi để debug
+  }
+
+  // Không lưu command nữa, chỉ hiện trang "sent" cho đẹp
   const html = renderPanelPage(userRaw, cmdRaw, "sent");
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   return res.send(html);
 });
+
 
 // Root route (optional)
 app.get("/", (req, res) => {
