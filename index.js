@@ -11,7 +11,7 @@ const SCRIPT_KEY = "FREE_76002dbd381656d46e167e6334900ece";
 // TTL mặc định: 60s, có thể override bằng env COMMAND_TTL_MS (tính bằng ms)
 let COMMAND_TTL_MS = Number(process.env.COMMAND_TTL_MS || 60 * 1000);
 const VERCEL_SELLALL_URL =
-  process.env.VERCEL_SELLALL_URL || "https://your-vercel-app.vercel.app/api/sellall-dispatch";
+  process.env.VERCEL_SELLALL_URL || "https://test-three-henna-34.vercel.app/api/sellall-dispatch";
 app.use(express.json());
 app.use(express.urlencoded({ extended: false })); // để đọc body form POST
 
