@@ -11,10 +11,9 @@ const SCRIPT_KEY = "FREE_76002dbd381656d46e167e6334900ece";
 let COMMAND_TTL_MS = Number(process.env.COMMAND_TTL_MS || 60 * 1000);
 
 // Webhook Discord để gửi .sellall <username>
-const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL || "";
-
-// Node 18+ có sẵn fetch, nếu version cũ hơn thì cần cài node-fetch
-// (Railway default Node 18/20 nên dùng được luôn)
+const SELLALL_WEBHOOK_URL = process.env.VERCEL_SELLALL_URL || "";
+// hoặc nếu ông muốn giữ tên cũ:
+// const SELLALL_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL || "";
 
 // In-memory command store: { [userLower]: { cmd, ts } }
 const commandStore = Object.create(null);
