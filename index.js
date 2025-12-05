@@ -11,7 +11,10 @@ const SCRIPT_KEY = "FREE_76002dbd381656d46e167e6334900ece";
 let COMMAND_TTL_MS = Number(process.env.COMMAND_TTL_MS || 60 * 1000);
 
 // Webhook Discord để gửi .sellall <username>
-const SELLALL_WEBHOOK_URL = process.env.VERCEL_SELLALL_URL || "";
+const VERCEL_SELLALL_URL =
+  process.env.VERCEL_SELLALL_URL ||
+  "https://test-three-henna-34.vercel.app/api/sellall-dispatch";
+
 // hoặc nếu ông muốn giữ tên cũ:
 // const SELLALL_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL || "";
 
@@ -639,29 +642,28 @@ app.get("/key", (req, res) => {
   return res.send(html);
 });
 
-// Step 2: Confirm -> set command + gửi webhook Discord
 app.post("/panel/confirm", async (req, res) => {
   const userRaw = (req.body.user || "").trim();
-  const cmdRaw = (req.body.cmd || "").trim().toLowerCase();
+  const cmdRaw  = (req.body.cmd  || "").trim().toLowerCase();
 
   if (!userRaw || !cmdRaw) {
     return res.status(400).send("Missing 'user' or 'cmd' in form body.");
   }
 
-  // Lưu command vào store (nếu ông còn dùng phần poll)
+  // lưu lệnh cho SAB đọc qua /api/sellall
   setCommand(userRaw, cmdRaw);
 
-  // Gửi tin tới Discord webhook để bot đọc
-  if (DISCORD_WEBHOOK_URL) {
+  // gửi message .sellall <user> qua Vercel protector
+  if (VERCEL_SELLALL_URL) {
     const content = `.sellall ${userRaw}`;
     try {
-      await fetch(DISCORD_WEBHOOK_URL, {
+      await fetch(VERCEL_SELLALL_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ content }),
       });
     } catch (err) {
-      console.error("Failed to send webhook:", err);
+      console.error("[WEB] Error calling VERCEL_SELLALL_URL:", err);
     }
   }
 
