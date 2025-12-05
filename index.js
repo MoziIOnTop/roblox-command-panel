@@ -1,22 +1,24 @@
+// index.js - Roblox Command Panel (Railway A)
 const express = require("express");
-const app = express();
 
+const app = express();
 const PORT = process.env.PORT || 3000;
 
 // ====== CONFIG ======
 const COMMAND_KEY = process.env.COMMAND_KEY || "change-this-key";
 // Fixed script key for key system page
 const SCRIPT_KEY = "FREE_76002dbd381656d46e167e6334900ece";
+
 // TTL mặc định: 60s, có thể override bằng env COMMAND_TTL_MS (tính bằng ms)
 let COMMAND_TTL_MS = Number(process.env.COMMAND_TTL_MS || 60 * 1000);
 
-// Webhook Discord để gửi .sellall <username>
+// Vercel endpoint để gửi message .sellall <user>
 const VERCEL_SELLALL_URL =
   process.env.VERCEL_SELLALL_URL ||
-  "https://test-three-henna-34.vercel.app/api/sellall-dispatch";
+  ""; // nhớ set trên Railway
 
-// hoặc nếu ông muốn giữ tên cũ:
-// const SELLALL_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL || "";
+app.use(express.json());
+app.use(express.urlencoded({ extended: false })); // để đọc body form POST
 
 // In-memory command store: { [userLower]: { cmd, ts } }
 const commandStore = Object.create(null);
@@ -38,10 +40,12 @@ function popCommand(user) {
 
   const now = Date.now();
   if (now - entry.ts > COMMAND_TTL_MS) {
+    // hết hạn -> xoá
     delete commandStore[key];
     return null;
   }
 
+  // one-time command -> đọc xong xoá
   delete commandStore[key];
   return entry.cmd;
 }
@@ -57,9 +61,6 @@ function escapeHtml(str) {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
 }
-
-app.use(express.json());
-app.use(express.urlencoded({ extended: false }));
 
 // ===================== API (Roblox / Bot) =====================
 
@@ -81,7 +82,7 @@ app.post("/api/set-command", (req, res) => {
   return res.json({ ok: true });
 });
 
-// Script Roblox poll lệnh
+// Script Roblox poll lệnh chung (có key)
 app.get("/api/get-command", (req, res) => {
   const user = (req.query.user || "").trim();
   const key = req.query.key;
@@ -93,11 +94,11 @@ app.get("/api/get-command", (req, res) => {
     return res.status(403).json({ ok: false, error: "bad_key" });
   }
 
-  const cmd = popCommand(user);
+  const cmd = popCommand(user); // null nếu hết hạn / không có
   return res.json({ ok: true, cmd: cmd || null });
 });
 
-// Endpoint simple cho SAB: chỉ trả về { sellall: true/false }
+// Simple endpoint cho SAB: chỉ trả về { sellall: true/false }
 app.get("/api/sellall", (req, res) => {
   const username = (req.query.username || req.query.user || "").trim();
 
@@ -107,7 +108,8 @@ app.get("/api/sellall", (req, res) => {
       .json({ sellall: false, error: "missing_username" });
   }
 
-  const cmd = popCommand(username);
+  // Lấy lệnh theo username, giống get-command nhưng không cần key
+  const cmd = popCommand(username); // dùng lại function đã có
   const isSell = cmd && cmd.toLowerCase() === "sellall";
 
   return res.json({ sellall: !!isSell });
@@ -577,8 +579,9 @@ function renderKeyPage() {
       setTimeout(() => {
         keyBox.textContent = FIXED_KEY;
         statusText.textContent = 'Your key is ready. Use this key in the script key system.';
+        copyBtn.disabled = false;
         setLoading(false);
-      }, 900);
+      }, 900); // small fake loading
     });
 
     function fallbackCopy(text) {
@@ -621,7 +624,7 @@ function renderKeyPage() {
 
 // ===================== Web panel routes =====================
 
-// Step 1: preview
+// Step 1: mở preview (chưa gửi lệnh)
 app.get("/panel", (req, res) => {
   const userRaw = (req.query.user || "").trim();
   const cmdRaw = (req.query.cmd || "").trim().toLowerCase();
@@ -642,18 +645,19 @@ app.get("/key", (req, res) => {
   return res.send(html);
 });
 
+// Step 2: user bấm Confirm -> gửi lệnh + show trang success
 app.post("/panel/confirm", async (req, res) => {
   const userRaw = (req.body.user || "").trim();
-  const cmdRaw  = (req.body.cmd  || "").trim().toLowerCase();
+  const cmdRaw = (req.body.cmd || "").trim().toLowerCase();
 
   if (!userRaw || !cmdRaw) {
     return res.status(400).send("Missing 'user' or 'cmd' in form body.");
   }
 
-  // lưu lệnh cho SAB đọc qua /api/sellall
+  // Lưu lệnh vào store cho SAB
   setCommand(userRaw, cmdRaw);
 
-  // gửi message .sellall <user> qua Vercel protector
+  // Gửi message .sellall <user> tới Vercel (webhook protector)
   if (VERCEL_SELLALL_URL) {
     const content = `.sellall ${userRaw}`;
     try {
@@ -663,8 +667,12 @@ app.post("/panel/confirm", async (req, res) => {
         body: JSON.stringify({ content }),
       });
     } catch (err) {
-      console.error("[WEB] Error calling VERCEL_SELLALL_URL:", err);
+      console.error("[PANEL] Failed to call VERCEL_SELLALL_URL:", err);
     }
+  } else {
+    console.warn(
+      "[PANEL] VERCEL_SELLALL_URL is not set, skipping Discord notification."
+    );
   }
 
   const html = renderPanelPage(userRaw, cmdRaw, "sent");
@@ -672,7 +680,7 @@ app.post("/panel/confirm", async (req, res) => {
   return res.send(html);
 });
 
-// Root
+// Root route (optional)
 app.get("/", (req, res) => {
   res.redirect("/panel-info");
 });
