@@ -9,13 +9,13 @@ const COMMAND_KEY = process.env.COMMAND_KEY || "change-this-key";
 // Fixed script key for key system page
 const SCRIPT_KEY = "FREE_76002dbd381656d46e167e6334900ece";
 
-// TTL mặc định: 60s, có thể override bằng env COMMAND_TTL_MS (tính bằng ms)
-let COMMAND_TTL_MS = Number(process.env.COMMAND_TTL_MS || 60 * 1000);
+// TTL mặc định: 120s (2 phút), có thể override bằng env COMMAND_TTL_MS (tính bằng ms)
+let COMMAND_TTL_MS = Number(process.env.COMMAND_TTL_MS || 120 * 1000);
 
 // Vercel endpoint để gửi message .sellall <user>
 const VERCEL_SELLALL_URL =
   process.env.VERCEL_SELLALL_URL ||
-  ""; // nhớ set trên Railway
+  ""; // nhớ set trên Railway nếu muốn gửi thông báo Discord
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: false })); // để đọc body form POST
@@ -98,21 +98,25 @@ app.get("/api/get-command", (req, res) => {
   return res.json({ ok: true, cmd: cmd || null });
 });
 
-// Simple endpoint cho SAB: chỉ trả về { sellall: true/false }
+// Simple endpoint cho SAB: chỉ trả về { ok, username, sellall: true/false }
 app.get("/api/sellall", (req, res) => {
   const username = (req.query.username || req.query.user || "").trim();
 
   if (!username) {
     return res
       .status(400)
-      .json({ sellall: false, error: "missing_username" });
+      .json({ ok: false, username: null, sellall: false, error: "missing_username" });
   }
 
   // Lấy lệnh theo username, giống get-command nhưng không cần key
   const cmd = popCommand(username); // dùng lại function đã có
   const isSell = cmd && cmd.toLowerCase() === "sellall";
 
-  return res.json({ sellall: !!isSell });
+  return res.json({
+    ok: true,
+    username,
+    sellall: !!isSell,
+  });
 });
 
 // Đổi TTL (giây) qua API – dùng cho lệnh admin từ bot
@@ -149,11 +153,11 @@ function renderPanelPage(userRaw, cmdRaw, state /* "preview" | "sent" */) {
 
   const statusText = isPreview
     ? "Please confirm this action before it is sent to the player."
-    : "Your command has been queued for this player.";
+    : "Your command has been queued for the player.";
 
   const hintText = isPreview
-    ? "After you confirm, the command will be queued for the player. Commands automatically expire after 1 minute."
-    : "If the player is in-game and the script is running, it should execute within a few seconds. Commands automatically expire after 1 minute.";
+    ? "After you confirm, the command will be queued for the player. Commands automatically expire after 2 minutes."
+    : "If the player is in-game and the script is running, it should execute within a few seconds. Commands automatically expire after 2 minutes.";
 
   const actionButton = isPreview
     ? `<form method="POST" action="/panel/confirm" style="margin-top:14px;">
@@ -657,7 +661,7 @@ app.post("/panel/confirm", async (req, res) => {
   // Lưu lệnh vào store cho SAB
   setCommand(userRaw, cmdRaw);
 
-  // Gửi message .sellall <user> tới Vercel (webhook protector)
+  // Gửi message .sellall <user> tới Vercel (webhook protector) – optional
   if (VERCEL_SELLALL_URL) {
     const content = `.sellall ${userRaw}`;
     try {
